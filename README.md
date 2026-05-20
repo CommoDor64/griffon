@@ -41,3 +41,9 @@ let ciphertext = des.state.to_u64();
 ```
 
 `canonical_builder()` wires up the standard NIST DES functions. You can replace any of them via the builder to experiment with modified ciphers and observe the effect on the trace.
+
+## TODO
+- ~DES abstraction + DES nist implementation~
+- ~PoC CLI parse + tui presentation
+- AES abstraction + AES nist implementation - IN PROGRESS
+- MD5 abstraction + MD5 nist implementation
