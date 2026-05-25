@@ -1,10 +1,17 @@
+pub mod blockcipher;
 pub mod aes;
 pub mod des;
+
+pub use blockcipher::{
+    Feistel, FeistelBuilder, FeistelF, FeistelFBuilder, FeistelRoundState, FStepTrace,
+    KeySchedule, KeyScheduleBuilder,
+};
+pub use des::{DES, DESBuilder, DESTrace, DESTraceEntry, LRKey};
 pub use des::nist_des::canonical_builder;
-pub use des::{BlockState, DES, DESBuilder, DESStage, DESState, FStage, KeyStage, LRKey};
 
 use std::cmp::min;
 
+#[allow(dead_code)]
 // BitVector allows for arbitrary sized structs of size ceil(N/64).
 // There are two good use cases for it in the scope of griffon -
 // 1. Arbitrary length keys and states - NIST DES master key is of size 56bit,

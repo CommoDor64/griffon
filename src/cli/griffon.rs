@@ -1,4 +1,4 @@
-use griffon::{canonical_builder, DESStage, DESState, FStage};
+use griffon::{canonical_builder, DESTraceEntry, FeistelRoundState};
 use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
@@ -14,12 +14,12 @@ use ratatui::{
 };
 
 struct App {
-    trace: Vec<DESState>,
+    trace:  Vec<DESTraceEntry>,
     cursor: usize,
 }
 
 impl App {
-    fn new(trace: Vec<DESState>) -> Self {
+    fn new(trace: Vec<DESTraceEntry>) -> Self {
         Self { trace, cursor: 0 }
     }
 
@@ -34,14 +34,10 @@ impl App {
     }
 
     fn stage_label(&self) -> String {
-        match &self.trace[self.cursor].des_stage {
-            DESStage::Start => "Start".to_string(),
-            DESStage::InitialPermutation => "Initial Permutation".to_string(),
-            DESStage::Round => {
-                let r = self.cursor.saturating_sub(2) / 8 + 1;
-                format!("Round {r}")
-            }
-            DESStage::FinalPermutation => "Final Permutation".to_string(),
+        match &self.trace[self.cursor] {
+            DESTraceEntry::IP { .. }    => "Initial Permutation".to_string(),
+            DESTraceEntry::Round(r)     => format!("Round {}", r.round + 1),
+            DESTraceEntry::FP { .. }    => "Final Permutation".to_string(),
         }
     }
 }
@@ -63,8 +59,8 @@ fn parse_hex(s: &str) -> u64 {
         })
 }
 
-fn ln(text: &'static str, hl: bool) -> Line<'static> {
-    if hl {
+fn hl(text: &'static str, active: bool) -> Line<'static> {
+    if active {
         Line::from(Span::styled(
             text,
             Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
@@ -74,81 +70,91 @@ fn ln(text: &'static str, hl: bool) -> Line<'static> {
     }
 }
 
-fn ip_sketch(stage: &DESStage) -> Vec<Line<'static>> {
-    let start = matches!(stage, DESStage::Start);
-    let ip = matches!(stage, DESStage::InitialPermutation);
-    let fp = matches!(stage, DESStage::FinalPermutation);
+fn ip_sketch(is_ip: bool, is_fp: bool) -> Vec<Line<'static>> {
     vec![
-        ln("    ┌──────────────────────────┐", start),
-        ln("    │       Input Block        │", start),
-        ln("    └─────────────┬────────────┘", start),
-        ln("                  │", false),
-        ln("    ┌─────────────┴────────────┐", ip),
-        ln("    │             IP           │", ip),
-        ln("    └─────────────┬────────────┘", ip),
-        ln("                  │", false),
-        ln("              L ──┼── R", false),
-        ln("                  │", false),
-        ln("         (16 Feistel rounds)", false),
-        ln("                  │", false),
-        ln("             R' ──┼── L'", false),
-        ln("                  │", false),
-        ln("    ┌─────────────┴────────────┐", fp),
-        ln("    │            IP⁻¹          │", fp),
-        ln("    └─────────────┬────────────┘", fp),
-        ln("                  │", false),
-        ln("    ┌──────────────────────────┐", fp),
-        ln("    │        Ciphertext        │", fp),
-        ln("    └──────────────────────────┘", fp),
+        hl("    ┌──────────────────────────┐", !is_ip && !is_fp),
+        hl("    │       Input Block        │", !is_ip && !is_fp),
+        hl("    └─────────────┬────────────┘", !is_ip && !is_fp),
+        Line::from("                  │"),
+        hl("    ┌─────────────┴────────────┐", is_ip),
+        hl("    │             IP           │", is_ip),
+        hl("    └─────────────┬────────────┘", is_ip),
+        Line::from("                  │"),
+        Line::from("              L ──┼── R"),
+        Line::from("                  │"),
+        Line::from("         (16 Feistel rounds)"),
+        Line::from("                  │"),
+        Line::from("             R' ──┼── L'"),
+        Line::from("                  │"),
+        hl("    ┌─────────────┴────────────┐", is_fp),
+        hl("    │            IP⁻¹          │", is_fp),
+        hl("    └─────────────┬────────────┘", is_fp),
+        Line::from("                  │"),
+        hl("    ┌──────────────────────────┐", is_fp),
+        hl("    │        Ciphertext        │", is_fp),
+        hl("    └──────────────────────────┘", is_fp),
     ]
 }
 
-fn feistel_sketch(stage: &FStage) -> Vec<Line<'static>> {
-    let init = matches!(stage, FStage::Init);
-    let ks = matches!(stage, FStage::KeySchedule);
-    let exp = matches!(stage, FStage::Expansion);
-    let kw = matches!(stage, FStage::KeyWhitening);
-    let sb = matches!(stage, FStage::SBox);
-    let pm = matches!(stage, FStage::Permutation);
-    let sx = matches!(stage, FStage::StateXor);
-    let dn = matches!(stage, FStage::Done);
+fn feistel_sketch(r: &FeistelRoundState<u32, u64>) -> Vec<Line<'static>> {
+    // Show the F pipeline; all steps are always visible, none highlighted
+    // (the state panel already shows the values at each sub-step).
     vec![
-        ln("    L (32-bit)                        R (32-bit)", init),
-        ln("         |               |               |", init),
-        ln("         |               K ──────────────┤", ks),
-        ln("         |               |       ┌────────────────┐", exp),
-        ln("         |               |       │   E expand     │", exp),
-        ln("         |               |       └───────┬────────┘", exp),
-        ln("         |               |───────────────│", kw),
-        ln("         |                       ┌───────┴────────┐", kw),
-        ln("         |                       │   XOR (+ K)    │", kw),
-        ln("         |                       └───────┬────────┘", kw),
-        ln("         |                       ┌───────┴────────┐", sb),
-        ln("         |                       │   S-boxes      │", sb),
-        ln("         |                       └───────┬────────┘", sb),
-        ln("         |                       ┌───────┴────────┐", pm),
-        ln("         |                       │   P permute    │", pm),
-        ln("         |                       └───────┬────────┘", pm),
-        ln("         |                               |", pm),
-        ln("         |                               |", pm),
-        ln("         ─────────────────────────────────", pm),
-        ln("                    ┌─────┴─────┐         ", sx),
-        ln("                    │    XOR    │         ", sx),
-        ln("                    └─────┬─────┘", sx),
-        ln("                          │", dn),
-        ln("                  new R   │   new L  (swap)", dn),
+        Line::from(format!("  Round {}   L=0x{:08x}   R=0x{:08x}", r.round + 1, r.left, r.right)),
+        Line::from(""),
+        Line::from("    R (32-bit)"),
+        Line::from("         │"),
+        Line::from("    ┌────┴────────────┐"),
+        Line::from("    │   E  expand     │"),
+        Line::from("    └────┬────────────┘"),
+        Line::from("         │──── XOR ────── K (round key)"),
+        Line::from("    ┌────┴────────────┐"),
+        Line::from("    │   S-boxes       │"),
+        Line::from("    └────┬────────────┘"),
+        Line::from("    ┌────┴────────────┐"),
+        Line::from("    │   P  permute    │"),
+        Line::from("    └────┬────────────┘"),
+        Line::from("         │"),
+        Line::from("    L ───┴─── XOR ──► new R   (L → new L)"),
     ]
 }
 
-fn sketch(step: &DESState) -> Vec<Line<'static>> {
-    match &step.des_stage {
-        DESStage::Round => feistel_sketch(&step.feistel_stage),
-        stage => ip_sketch(stage),
+fn sketch(entry: &DESTraceEntry) -> Vec<Line<'static>> {
+    match entry {
+        DESTraceEntry::IP { .. }    => ip_sketch(true, false),
+        DESTraceEntry::FP { .. }    => ip_sketch(false, true),
+        DESTraceEntry::Round(r)     => feistel_sketch(r),
+    }
+}
+
+fn state_lines(entry: &DESTraceEntry) -> Vec<Line<'static>> {
+    match entry {
+        DESTraceEntry::IP { input, output } => vec![
+            Line::from(format!("  Input:  0x{input:016x}")),
+            Line::from(format!("  Output: 0x{output:016x}  (after IP)")),
+        ],
+        DESTraceEntry::FP { input, output } => vec![
+            Line::from(format!("  Input:  0x{input:016x}  (pre-IP⁻¹)")),
+            Line::from(format!("  Output: 0x{output:016x}  (ciphertext)")),
+        ],
+        DESTraceEntry::Round(r) => vec![
+            Line::from(format!(
+                "  L: 0x{:08x}   R: 0x{:08x}   K: 0x{:012x}",
+                r.left, r.right, r.round_key
+            )),
+            Line::from(format!(
+                "  expand→0x{:012x}  xor→0x{:012x}  sbox→0x{:08x}  p→0x{:08x}",
+                r.f_trace.after_expand,
+                r.f_trace.after_key_mix,
+                r.f_trace.after_substitute,
+                r.f_trace.after_permute,
+            )),
+        ],
     }
 }
 
 fn ui(f: &mut Frame, app: &App) {
-    let step = &app.trace[app.cursor];
+    let entry = &app.trace[app.cursor];
     let chunks = Layout::vertical([
         Constraint::Length(3),
         Constraint::Min(0),
@@ -170,23 +176,14 @@ fn ui(f: &mut Frame, app: &App) {
     );
 
     f.render_widget(
-        Paragraph::new(sketch(step))
+        Paragraph::new(sketch(entry))
             .block(Block::default().borders(Borders::ALL).title(" Sketch ")),
         chunks[1],
     );
 
     f.render_widget(
-        Paragraph::new(vec![
-            Line::from(format!(
-                "  L: 0x{:08x}    R: 0x{:016x}",
-                step.state.left, step.f_state
-            )),
-            Line::from(format!(
-                "  KL: 0x{:07x}   KR: 0x{:07x}   Sub-step: {:?}",
-                step.current_key.left, step.current_key.right, step.feistel_stage
-            )),
-        ])
-        .block(Block::default().borders(Borders::ALL).title(" State ")),
+        Paragraph::new(state_lines(entry))
+            .block(Block::default().borders(Borders::ALL).title(" State ")),
         chunks[2],
     );
 
@@ -204,39 +201,27 @@ fn main() {
         std::process::exit(1);
     }
     let plaintext = parse_hex(&args[1]);
-    let key = parse_hex(&args[2]);
+    let key       = parse_hex(&args[2]);
 
     let mut des = canonical_builder().build(key);
-    des.start(plaintext);
-    for _ in 0..16 {
-        des.next_round();
-    }
-    des.finalize();
-    let trace = des.get_history().to_vec();
-
-    println!("{:?}", trace);
-    let mut app = App::new(trace);
+    let (_, trace) = des.encrypt(plaintext);
+    let app = App::new(trace);
 
     enable_raw_mode().unwrap();
     let mut stdout = std::io::stdout();
     execute!(stdout, EnterAlternateScreen).unwrap();
-    let backend = CrosstermBackend::new(stdout);
+    let backend  = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend).unwrap();
     let _guard = TerminalGuard;
 
+    let mut app = app;
     loop {
         terminal.draw(|f| ui(f, &app)).unwrap();
-        if let Ok(Event::Key(KeyEvent {
-            code,
-            kind: KeyEventKind::Press,
-            ..
-        })) = event::read()
-        {
+        if let Ok(Event::Key(KeyEvent { code, kind: KeyEventKind::Press, .. })) = event::read() {
             match code {
                 KeyCode::Right | KeyCode::Char('l') => app.next(),
-                KeyCode::Left | KeyCode::Char('h') => app.prev(),
-                KeyCode::Char('b') => app.prev(),
-                KeyCode::Char('q') | KeyCode::Esc => break,
+                KeyCode::Left  | KeyCode::Char('h') => app.prev(),
+                KeyCode::Char('q') | KeyCode::Esc   => break,
                 _ => {}
             }
         }

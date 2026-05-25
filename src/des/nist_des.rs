@@ -1,3 +1,4 @@
+use crate::blockcipher::{FeistelFBuilder, KeyScheduleBuilder};
 use crate::des::{DESBuilder, LRKey};
 
 fn use_table(table: &[i32], input: u64, domain_size: u8, codomain_size: u8) -> u64 {
@@ -152,16 +153,25 @@ pub(crate) fn permute(state: u32) -> u32 {
 }
 
 pub fn canonical_builder() -> DESBuilder {
-    DESBuilder::default()
-        .pc1(pc1)
-        .rotate_and_pc2(rotate_and_pc2)
+    let ks = KeyScheduleBuilder::<u64, LRKey, u64>::new()
+        .init(|mk| pc1(mk))
+        .step(|lrkey, round| rotate_and_pc2(lrkey, round))
+        .build();
+
+    let f = FeistelFBuilder::<u32, u64>::new()
+        .expand(expand)
+        .key_mix(|e, k| e ^ k)
+        .substitute(sbox)
+        .permute(permute)
+        .build();
+
+    DESBuilder::new()
         .ip(ip)
         .ip_inv(ip_inv)
-        .key_whitening(|k, x| k ^ x)
-        .e(expand)
-        .sbox(sbox)
-        .p(permute)
-        .state_xor(|l, s| l ^ s)
+        .split(|block| ((block >> 32) as u32, block as u32))
+        .combine(|l, r| (r as u64) << 32 | l as u64)
+        .key_schedule(ks)
+        .f(f)
 }
 
 #[cfg(test)]
@@ -174,18 +184,10 @@ mod tests {
         let plaintext: u64 = 0x0123456789ABCDEF;
         let expected: u64 = 0x85E813540F0AB405;
         let mut des = canonical_builder().build(key);
-
-        des.start(plaintext);
-        for _ in 0..16 {
-            des.next_round();
-        }
-        des.finalize();
-
-        let ciphertext = des.state.to_u64();
+        let (ciphertext, _) = des.encrypt(plaintext);
         assert_eq!(
             ciphertext, expected,
-            "DES mismatch: got {:016X}, expected {:016X}",
-            ciphertext, expected
+            "DES mismatch: got {ciphertext:016X}, expected {expected:016X}",
         );
     }
 }
