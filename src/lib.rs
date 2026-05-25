@@ -1,5 +1,6 @@
 pub mod aes;
 pub mod des;
+pub mod md5;
 pub use des::nist_des::canonical_builder;
 pub use des::{BlockState, DES, DESBuilder, DESStage, DESState, FStage, KeyStage, LRKey};
 
