@@ -33,7 +33,7 @@ impl fmt::Debug for LRKey {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize)]
 pub enum DESTraceEntry {
     /// Initial permutation step.
     IP { input: u64, output: u64 },

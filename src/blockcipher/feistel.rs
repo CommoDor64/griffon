@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize)]
 pub struct FStepTrace<B: Copy, E: Copy> {
     pub after_expand:   E,
     pub after_key_mix:  E,
@@ -8,7 +8,7 @@ pub struct FStepTrace<B: Copy, E: Copy> {
     pub after_permute:  B,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize)]
 pub struct FeistelRoundState<B: Copy, E: Copy> {
     pub round:     usize,
     pub left:      B,
